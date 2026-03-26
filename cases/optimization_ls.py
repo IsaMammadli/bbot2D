@@ -14,7 +14,7 @@ print(os.getcwd())
 #user defined
 from src.Ellipse2dObj import *
 from src.animate import *
-from _trajectory import *
+from src.trajectory import *
 from src.simopt import *
 from src.optimizer_utils import *
 
