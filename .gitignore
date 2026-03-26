@@ -1,5 +1,0 @@
-code_outputs/figures/*
-!code_outputs/figures/.gitkeep
-
-code_outputs/data/*
-!code_outputs/data/.gitkeep
