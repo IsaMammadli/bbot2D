@@ -188,10 +188,10 @@ for tr_id in range(4):
         ax2.hist(wf, bins=60, density=True, color="black")
         ax2.hist(accumulated_w, bins=60, density=True, color="C3", alpha=0.) # Added ensemble
         ax2.plot(wrange, skewed_dists[tr_id].pdf(wrange), "r--", lw=2)
-
-        # Row 4: P(v) - Now Ensemble Averaged
+ 
+        # Row 4: P(v) - Now Ensemble Averaged -- multiply by 100 for cm/s and change ax5-xlabel
         ax5.hist(vpmag, bins=60, density=True, color="black")
-        ax5.hist(accumulated_vpmag, density=True, bins=60, color='C3', alpha=0.6) # Changed from df3.vpmag
+        ax5.hist(np.array(accumulated_vpmag), density=True, bins=60, color='C3', alpha=0.6) # Changed from df3.vpmag
 
         # Row 5: P(η) - Ensemble Averaged
         ax4.hist(np.abs(wf/vpmag*1.45/100), density=True, bins=60, color='black')
@@ -205,7 +205,7 @@ for tr_id in range(4):
     ax1.set_xlabel("x (cm)")
     ax3.set_xlabel(r't (s)')
     ax2.set_xlabel(r"$\omega$ (rad/s)")
-    ax5.set_xlabel(r"$\omega$ (rad/s)")
+    ax5.set_xlabel(r"$v$ (m/s)")
     ax4.set_xlabel(r"$\eta$")
 
     # y-labels (leftmost column only)
