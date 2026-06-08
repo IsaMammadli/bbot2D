@@ -40,8 +40,8 @@ def filter_XY(df,dtime, filtering, window, pol_degree):
         wf = savgol_filter(df.Theta, win,pol_degree, 1)/dtime
         
         return X,Y,Thetaf, vpxf,vpyf, wf
-        
 
+        
 
 def derive_ICR(df,dtime, filtering, window=31, pol_degree=6):
 

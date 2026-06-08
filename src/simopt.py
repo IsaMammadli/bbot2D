@@ -17,11 +17,216 @@ MINOR = 3.0/2/100#44.542/2*cf
 Xmax=792*cf
 Ymax=718*cf
 
-rho1 = 0.374
+rho1 = -0.374
 rho2 = 0.661
 rmag = np.sqrt((rho1*MAJOR)**2+(rho2*MINOR)**2)
 
 norm = np.linalg.norm
+#----------------------------------------------------------------------------
+class BBot():
+    id_iter = count()
+    def __init__(self, 
+                 r = np.array([0,0]), 
+                 theta_rad = rad(0), 
+                 t0=0,
+                 npoints = 101,
+                 vfunc1=np.sin, vfunc2=np.sin, wfunc=np.sin, cm_scale=False): 
+        
+        #head is self.body[0,:]
+        #self.ID = next(Ell.id_iter)
+        #dimensions
+        self.A1 = 5.5*1e-2/2; #m
+        self.A2 = 3.0*1e-2/2; #m
+        if cm_scale:  
+            self.A1*=100
+            self.A2*=100     
+
+        
+        self.set_rho(wfunc(0))
+        self.rmag = np.sqrt((self.rho1*self.A1)**2+(self.rho2*self.A2)**2)
+        
+
+        self.data = []
+        #position 
+        self.r = r # position (x,y)=(r[0], r[1])
+        #set orientations
+        self.theta = theta_rad
+        self.n1 = np.array([1,0]) #dummy values
+        self.n2 = np.array([0,1]) #dummy values
+        self.n1f = lambda phi: np.array([ np.cos(phi), np.sin(phi)])
+        self.n2f = lambda phi: np.array([-np.sin(phi), np.cos(phi)])
+        #velocity
+        self.v=np.array([0.,0.])
+        self.w=0.
+
+        self.time = t0
+        self.time_0 = t0
+        self.vf1 = vfunc1
+        self.vf2 = vfunc2
+        self.wf  = wfunc
+
+        #direction
+        if abs(self.theta)>2*np.pi:
+            self.theta=np.sign(self.theta)*(abs(self.theta)%(2*np.pi))
+           
+        #direction vectors
+        self.updateNormals()
+        #self.reconstructBody()
+        
+        self.ctend = np.array([0.,0.])
+        #self.set_rho()
+        self.rc = self.calculate_rc()
+        self.theta_previous = self.theta
+        #self.gatherData()
+        self.df = pd.DataFrame()
+
+    #com is position calculated with ctend and geometric center
+    def set_rho(self, w):
+        self.rho1 = rho1
+        self.rho2 = np.sign(w)*rho2
+        # if w<=0: #CW, 
+        #     self.rho1 = -0.374
+        #     self.rho2 = -0.661
+        # elif w>0: #CCW rotation
+        #     self.rho1 = -0.374
+        #     self.rho2 =  0.661
+    
+    def calculate_rc(self): 
+        rc = np.zeros(2)
+        rc = self.r+self.rho1*self.A1*self.n1+self.rho2*self.A2*self.n2
+        return rc  
+
+    def updateNormals(self):
+        self.n1 = self.n1f(self.theta)
+        self.n2 = self.n2f(self.theta)
+    
+    def gatherData(self):
+        v1 = self.v@self.n1
+        v2 = self.v@self.n2
+        self.data.append([self.time, self.r[0], self.r[1], self.theta,self.rc[0], self.rc[1], self.v[0], self.v[1], v1,v2, norm(self.v), self.w, self.rho1,self.rho2])
+        
+    def getData(self):
+        self.df =  pd.DataFrame(self.data, columns='time,X,Y,Theta,cx,cy,vx,vy,v1,v2,v,w,rho1,rho2'.split(','))
+        return self.df
+    def simulate(self, time, dt, icr='geom'):
+        nt = int(np.round(time/dt))
+        for i in range(nt):
+            self.move(dt)
+        df = self.getData()
+        self.df = df
+
+    def postprocess(self):
+        df = self.df
+        rho2 = self.rho2
+        rho1 = self.rho1
+        A1   = self.A1
+        A2   = self.A2
+        rmrcx = -(rho1*A1*np.cos(df.Theta)-rho2*A2*np.sin(df.Theta)) #(r-rc)_x
+        rmrcy = -(rho1*A1*np.sin(df.Theta)+rho2*A2*np.cos(df.Theta))
+
+        df['vpx'] = df.vx - df.w*rmrcy
+        df['vpy'] = df.vy + df.w*rmrcx
+        df['vpmag'] = np.sqrt(df.vpx**2+df.vpy**2)
+
+        df['vpx_grad'] = np.gradient(df.X)/np.gradient(df.time)
+        df['vpy_grad'] = np.gradient(df.Y)/np.gradient(df.time)
+        
+        df['sigma'] = np.abs(df.w*self.rmag)/df.vpmag
+        df['Gicrx'] = df.X-df.vpy/df.w
+        df['Gicry'] = df.Y+df.vpx/df.w
+
+        if np.all((df.rho2*df.w)<0):
+            print("w and rho2 dont align.")
+
+        self.df = df 
+
+
+
+def simulate_bbot(Bot, time, dt, integrator='ExpEu', dependency='time'):
+    if integrator=='ExpEu':
+        return integrate_ExpEu(Bot, time, dt)
+    elif integrator=='CN':
+        return integrate_CN(Bot, time, dt, dependency)
+
+def integrate_ExpEu(Bot, time, dt):
+    nt = int(np.round(time/dt))
+    B = Bot
+    for i in range(nt):
+        B.time += dt
+        t = B.time
+        B.set_rho(B.w) #since this is ExpEu velocities from prev time used
+
+        B.theta_previous = B.theta
+        B.theta += B.w*dt
+        B.updateNormals()
+
+        B.r  = Rot(B.w*dt)@(B.r-B.rc)+ B.rc + B.v*dt
+        B.rc = B.rc + B.v*dt
+        #B.rc = B.rc + B.v*dt
+        #B.r  = B.rc - (rho1*A1*B.n1+rho2*A2*B.n2)
+
+        #Bot.updateVelocities(dt)
+        B.v = B.vf1(t)*B.n1+B.vf2(t)*B.n2
+        B.w = B.wf(t)
+        #B.rc = B.calculate_rc()
+        B.gatherData()
+    B.getData()
+    B.postprocess()
+    df = B.df
+    return df
+
+def integrate_CN(Bot, time, dt, dependency):
+    nt = int(np.round(time/dt))
+    B = Bot
+    for i in range(nt):
+        t0 = B.time
+        t1 = t0+dt
+        B.time = t1
+
+        w = 0.5*(B.wf(t0)+B.wf(t1))
+        B.set_rho(w)
+        th0 = B.theta
+        th1 = B.theta+w*dt
+        B.theta = th1
+        B.updateNormals()
+        
+
+        #B.theta_previous = B.theta
+        #B.theta += w*dt
+        if dependency == 'time':
+            v_t0 = B.vf1(t0)*B.n1f(th0)+B.vf2(t0)*B.n2f(th0) #with theta_previous
+            v_t1 = B.vf1(t1)*B.n1f(th1)+B.vf2(t1)*B.n2f(th1) #with theta
+        elif dependency == 'angle':
+            v_t0 = B.vf1(th0)*B.n1f(th0)+B.vf2(th0)*B.n2f(th0) #with theta_previous
+            v_t1 = B.vf1(th1)*B.n1f(th1)+B.vf2(th1)*B.n2f(th1) #with theta
+        elif dependency == 'timeAngle':
+            v_t0 = B.vf1(t0, th0)*B.n1f(th0)+B.vf2(t0, th0)*B.n2f(th0) #with theta_previous
+            v_t1 = B.vf1(t0, th1)*B.n1f(th1)+B.vf2(t0, th0)*B.n2f(th1) #with theta
+
+
+        v = 0.5*(v_t0+v_t1)
+
+
+        B.r  = Rot(w*dt)@(B.r-B.rc) + B.rc + v*dt
+        B.rc = B.rc + v*dt
+
+        B.w = B.wf(t1) 
+        B.v = v_t1 
+
+        #Bot.updateVelocities(dt)
+        #B.rc = B.calculate_rc()
+        B.gatherData()
+    B.getData()
+    B.postprocess()
+    df = B.df
+    return df
+
+#--------------------------------------------------------------------------
+
+
+
+
+
 class Ell2D():
     id_iter = count()
     def __init__(self, 
@@ -208,204 +413,6 @@ class Ell2D():
         x = com[0]+R*np.cos(t)
         y = com[1]+R*np.sin(t)
         return x,y
-#----------------------------------------------------------------------------
-class BBot():
-    id_iter = count()
-    def __init__(self, 
-                 r = np.array([0,0]), 
-                 theta_rad = rad(0), 
-                 t0=0,
-                 npoints = 101,
-                 vfunc1=np.sin, vfunc2=np.sin, wfunc=np.sin, cm_scale=False): 
-        
-        #head is self.body[0,:]
-        #self.ID = next(Ell.id_iter)
-        #dimensions
-        self.A1 = 5.5*1e-2/2; #m
-        self.A2 = 3.0*1e-2/2; #m
-        if cm_scale:  
-            self.A1*=100
-            self.A2*=100     
-
-        
-        self.set_rho(wfunc(0))
-        self.rmag = np.sqrt((self.rho1*self.A1)**2+(self.rho2*self.A2)**2)
-        
-
-        self.data = []
-        #position 
-        self.r = r # position (x,y)=(r[0], r[1])
-        #set orientations
-        self.theta = theta_rad
-        self.n1 = np.array([1,0]) #dummy values
-        self.n2 = np.array([0,1]) #dummy values
-        self.n1f = lambda phi: np.array([ np.cos(phi), np.sin(phi)])
-        self.n2f = lambda phi: np.array([-np.sin(phi), np.cos(phi)])
-        #velocity
-        self.v=np.array([0.,0.])
-        self.w=0.
-
-        self.time = t0
-        self.time_0 = t0
-        self.vf1 = vfunc1
-        self.vf2 = vfunc2
-        self.wf  = wfunc
-
-        #direction
-        if abs(self.theta)>2*np.pi:
-            self.theta=np.sign(self.theta)*(abs(self.theta)%(2*np.pi))
-           
-        #direction vectors
-        self.updateNormals()
-        #self.reconstructBody()
-        
-        self.ctend = np.array([0.,0.])
-        #self.set_rho()
-        self.rc = self.calculate_rc()
-        self.theta_previous = self.theta
-        #self.gatherData()
-        self.df = pd.DataFrame()
-
-    #com is position calculated with ctend and geometric center
-    def set_rho(self, w):
-        if w<=0: #CW, 
-            self.rho1 = -0.374
-            self.rho2 = -0.661
-        elif w>0: #CCW rotation
-            self.rho1 = -0.374
-            self.rho2 =  0.661
-    
-    def calculate_rc(self): 
-        rc = np.zeros(2)
-        rc = self.r+self.rho1*self.A1*self.n1+self.rho2*self.A2*self.n2
-        return rc  
-
-    def updateNormals(self):
-        self.n1 = self.n1f(self.theta)
-        self.n2 = self.n2f(self.theta)
-    
-    def gatherData(self):
-        v1 = self.v@self.n1
-        v2 = self.v@self.n2
-        self.data.append([self.time, self.r[0], self.r[1], self.theta,self.rc[0], self.rc[1], self.v[0], self.v[1], v1,v2, norm(self.v), self.w, self.rho1,self.rho2])
-        
-    def getData(self):
-        self.df =  pd.DataFrame(self.data, columns='time,X,Y,Theta,cx,cy,vx,vy,v1,v2,v,w,rho1,rho2'.split(','))
-        return self.df
-    def simulate(self, time, dt, icr='geom'):
-        nt = int(np.round(time/dt))
-        for i in range(nt):
-            self.move(dt)
-        df = self.getData()
-        self.df = df
-
-    def postprocess(self):
-        df = self.df
-        rho2 = self.rho2
-        rho1 = self.rho1
-        A1   = self.A1
-        A2   = self.A2
-        rmrcx = -(rho1*A1*np.cos(df.Theta)-rho2*A2*np.sin(df.Theta)) #(r-rc)_x
-        rmrcy = -(rho1*A1*np.sin(df.Theta)+rho2*A2*np.cos(df.Theta))
-
-        df['vpx'] = df.vx - df.w*rmrcy
-        df['vpy'] = df.vy + df.w*rmrcx
-        df['vpmag'] = np.sqrt(df.vpx**2+df.vpy**2)
-
-        df['vpx_grad'] = np.gradient(df.X)/np.gradient(df.time)
-        df['vpy_grad'] = np.gradient(df.Y)/np.gradient(df.time)
-        
-        df['sigma'] = np.abs(df.w*self.rmag)/df.vpmag
-        df['Gicrx'] = df.X-df.vpy/df.w
-        df['Gicry'] = df.Y+df.vpx/df.w
-
-        if np.all((df.rho2*df.w)<0):
-            print("w and rho2 dont align.")
-
-        self.df = df 
-
-
-
-def simulate_bbot(Bot, time, dt, integrator='ExpEu', dependency='time', w_correction=False):
-    if integrator=='ExpEu':
-        return integrate_ExpEu(Bot, time, dt)
-    elif integrator=='CN':
-        return integrate_CN(Bot, time, dt, dependency, w_correction)
-
-def integrate_ExpEu(Bot, time, dt):
-    nt = int(np.round(time/dt))
-    B = Bot
-    for i in range(nt):
-        B.time += dt
-        t = B.time
-        B.set_rho(B.w) #since this is ExpEu velocities from prev time used
-
-        B.theta_previous = B.theta
-        B.theta += B.w*dt
-        B.updateNormals()
-
-        B.r  = Rot(B.w*dt)@(B.r-B.rc)+ B.rc + B.v*dt
-        B.rc = B.rc + B.v*dt
-        #B.rc = B.rc + B.v*dt
-        #B.r  = B.rc - (rho1*A1*B.n1+rho2*A2*B.n2)
-
-        #Bot.updateVelocities(dt)
-        B.v = B.vf1(t)*B.n1+B.vf2(t)*B.n2
-        B.w = B.wf(t)
-        #B.rc = B.calculate_rc()
-        B.gatherData()
-    B.getData()
-    B.postprocess()
-    df = B.df
-    return df
-
-def integrate_CN(Bot, time, dt, dependency, w_correction):
-    nt = int(np.round(time/dt))
-    B = Bot
-    for i in range(nt):
-        t0 = B.time
-        t1 = t0+dt
-        B.time = t1
-
-        w = 0.5*(B.wf(t0)+B.wf(t1))
-        B.set_rho(w)
-        th0 = B.theta
-        th1 = B.theta+w*dt
-        B.theta = th1
-        B.updateNormals()
-        
-
-        #B.theta_previous = B.theta
-        #B.theta += w*dt
-        if dependency == 'time':
-            v_t0 = B.vf1(t0)*B.n1f(th0)+B.vf2(t0)*B.n2f(th0) #with theta_previous
-            v_t1 = B.vf1(t1)*B.n1f(th1)+B.vf2(t1)*B.n2f(th1) #with theta
-        elif dependency == 'angle':
-            v_t0 = B.vf1(th0)*B.n1f(th0)+B.vf2(th0)*B.n2f(th0) #with theta_previous
-            v_t1 = B.vf1(th1)*B.n1f(th1)+B.vf2(th1)*B.n2f(th1) #with theta
-
-        if w_correction: #unnecessary, can be removed.
-            v_t0 = v_t0/np.abs(w)
-            v_t1 = v_t1/np.abs(w)
-
-        v = 0.5*(v_t0+v_t1)
-
-
-        B.r  = Rot(w*dt)@(B.r-B.rc) + B.rc + v*dt
-        B.rc = B.rc + v*dt
-
-        B.w = B.wf(t1) 
-        B.v = v_t1 
-
-        #Bot.updateVelocities(dt)
-        #B.rc = B.calculate_rc()
-        B.gatherData()
-    B.getData()
-    B.postprocess()
-    df = B.df
-    return df
-
-#--------------------------------------------------------------------------
 
 def plot_sim(df, i_step=0, plot_cor=True):
     fig = plt.figure(figsize=(18, 10))

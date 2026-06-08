@@ -68,8 +68,6 @@ def error_function_general(sim_params, id, erf_id,
             b0 = BBot(r = np.array([x0,y0]), theta_rad = phi_0, t0=t_0, vfunc1=fv1, vfunc2=fv2, wfunc=w_interpolator)
             df_sim = simulate_bbot(b0, sim_time, dt, 'CN', 'angle')
 
-
-
     residual_x=(X[id[0]:id[1]] - df_sim.X)
     residual_y=(Y[id[0]:id[1]] - df_sim.Y)
     
@@ -80,33 +78,38 @@ def error_function_general(sim_params, id, erf_id,
 
 
 
-def optimize_ls(i, j, k, erf_id, normalize=False, optype='residual', fw_type = 'interpolate', sim_order=1):
-    edt = dtime[i][j][k]
-    time = dfs[i][j][k].Time
-    df = dfs[i][j][k]
-    dirr = np.sign(np.average((df.w)))
-    Xf, Yf, Thetaf, vpxf, vpyf, wf = filter_XY(df, edt, True, 21, 3)
+def optimize_ls(l1, time, x, y, theta, erf_id, sim_time, normalize=False, optype='residual', fw_type = 'interpolate', sim_order=1):
+    edt = np.average(np.diff(time))
+    # time = t
+    
+    win=21
+    pol_degree=3
+    
+    Xf = savgol_filter(x, win,pol_degree, 0)
+    Yf = savgol_filter(y, win,pol_degree, 0)
+    vpxf = savgol_filter(x, win,pol_degree, 1)/edt
+    vpyf = savgol_filter(y, win,pol_degree, 1)/edt
+    vpfmag = np.sqrt(vpxf**2+vpyf**2)
+    wf = savgol_filter(theta, win,pol_degree, 1)/edt
+    Thetaf = savgol_filter(theta, win,pol_degree, 0)
+    etaf = savgol_filter(wf/vpfmag, win,pol_degree)*1.45/100#wf*1.45/100/np.sqrt(vpxf**2+vpyf**2)#savgol_filter(df.w/df.vmag, 21,3)*1.45/100#
+    
+    dirr = np.sign(np.average((wf)))
 
-    # Compute trajectory components
-    v1f = vpxf * np.cos(Thetaf) + vpyf * np.sin(Thetaf)
-    v2f = -vpxf * np.sin(Thetaf) + vpyf * np.cos(Thetaf)
-    rho1 = 0.374
-    rho2 = dirr * 0.661
-    vc1 = v1f - wf * rho2 * A2
-    vc2 = v2f - wf * rho1 * A1
-    Rx = -vpyf / wf
-    Ry = vpxf / wf
     rx = Xf - vpyf / wf
     ry = Yf + vpxf / wf
-    traj_radius = np.sqrt(vpxf**2 + vpyf**2) / np.abs(wf)
-    etaf = savgol_filter(df.w/df.vmag, 21,3)*1.45/100#wf*1.45/100/np.sqrt(vpxf**2+vpyf**2)#savgol_filter(df.w/df.vmag, 21,3)*1.45/100#
+    # data = [time[:l1], Xf[:l1], Yf[:l1], Thetaf[:l1], wf[:l1], rx[:l1], ry[:l1], etaf[:l1]]
+    # keep arrays full
     data = [time, Xf, Yf, Thetaf, wf, rx, ry, etaf]
+    # clamp l1 so time[l1] is valid (the 1.0*len(x) case is otherwise OOB)
+    l1 = min(int(l1), len(time) - 1)
+    
     df_opt = []
 
     vs = []
-    l0 = 0
-    l1 = len(df) - 1
-    sim_time = time[l1] - time[l0]
+    # l0 = 0
+    # l1 = len(x) - 1
+    # sim_time = time[l1] - time[l0]
 
     # Set up interpolators for angular variables
     if fw_type=='interpolate':
@@ -120,12 +123,12 @@ def optimize_ls(i, j, k, erf_id, normalize=False, optype='residual', fw_type = '
 
     # Error function closure
     error_compute = lambda params: error_function_general(
-        params, [l0, l1], erf_id, data, edt, theta_interp, fw, dirr, optype, sim_order, fw_type
+        params, [0, l1], erf_id, data, edt, theta_interp, fw, dirr, optype, sim_order, fw_type
     )
 
     # Choose optimizer based on optype
     if optype == 'residual':
-        result = least_squares(error_compute, np.random.rand(erf_param_len[erf_id]))
+        result = least_squares(error_compute, 100*np.random.rand(erf_param_len[erf_id]))
     elif optype == 'euclidian':
         result = minimize(error_compute, np.random.rand(erf_param_len[erf_id]), method='L-BFGS-B')
 
@@ -135,7 +138,7 @@ def optimize_ls(i, j, k, erf_id, normalize=False, optype='residual', fw_type = '
 
     vs.append(result.x)
 
-
+    l0=0
     if sim_order==1:
         b0 = Ell2D(r=[Xf[l0], Yf[l0]], theta_rad=Thetaf[l0], t0=time[l0],
                      vfunc1=fv1, vfunc2=fv2, wfunc=fw)
@@ -154,17 +157,25 @@ def optimize_ls(i, j, k, erf_id, normalize=False, optype='residual', fw_type = '
             b0.df=df_sim
             b0.postprocess()
     df_opt.append(df_sim)
-
+    print(len(df_sim))
     return data, df_sim, result, vs
 
 
-def compute_least_squares_cost(X, Y, Xfit, Yfit):
-    residual_x = X - Xfit
-    residual_y = Y - Yfit
-    residuals = np.concatenate([residual_x, residual_y])
-    cost_i = np.sqrt(residual_x ** 2+residual_y**2)
-    cost = 0.5 * np.sum(residuals ** 2)
-    return cost_i, cost
+tr1 = np.load('../bbotv2_data/mode_1.npy').T
+tr1 = tr1[120:,:]
+tr1 = tr1-tr1[0,:]
+
+time, x, y, theta = tr1[:,:].T
+x *= 1/100
+y *= 1/100
+theta = np.unwrap(theta, period=np.pi)+np.pi   # in degrees, period 1
+
+print('data len', len(x))
+
+# edata,  simdf, res, vs = optimize_ls(time, x, y, theta, 11, 'residual', fw_type='interpolate', sim_order=2)
+
+
+
 
 edatas = []
 opts   = []
@@ -174,21 +185,29 @@ vparams = []
 rows = 0
 ijk = [ [2,0,8],[4,1,5], [0,0,5],[2,1,7]]
 models = [11,11,11,11]
+ls = np.int32(np.array([1.0, 0.8, 0.6, 0.4])*len(x))
+
 for c in range(4):    
     rows+=1
-    i,j,k = ijk[c]
-    df = dfs[i][j][k]
-    edata,  opt8, res,vs = optimize_ls(i,j,k, 11, 'residual', fw_type='interpolate', sim_order=2)
+    edata, opt8, res, vs = optimize_ls(ls[c], time, x, y, theta, 11, time[-1]-time[0], 'residual', fw_type='interpolate', sim_order=2)
     edatas.append(edata)
     opts.append(opt8)
     ress.append(res)
     vparams.append(vs)
     l1  = len(edata[1])-1
 
+# print(len(opt8.X))
+# plt.plot(opt8.X, opt8.Y)
+# plt.figure()
+# plt.plot(opt8.X, opt8.Y)
+
+# # plt.plot(opt8.X[ls[c]:],opt8.Y[ls[c]:] , ls='--', alpha=0.5)
+
+# plt.show()
+
 
 errors = np.array(errors)
-
-fig, axs = plt.subplots(2, 4, figsize=(10, 5))  # 2 rows, 5 columns
+fig, axs = plt.subplots(2, 4, figsize=(12, 5))  # 2 rows, 5 columns
 fig.subplots_adjust(hspace=0.4, wspace=0.3)  # vertical spacing
 
 cols = 4
@@ -199,25 +218,77 @@ shift=0
 shift_delta = lambda x: 1.01*(np.max(x)-np.min(x))
 cntr=0
 
-for c in range(len(ijk)):
-    i,j,k = ijk[c]
-    df = dfs[i][j][k]
+scf = 100
+# for c in range(4):
+
+#     edata = edatas[c]
+#     opt8 = opts[c]
+#     res = ress[c]
+#     vs = vparams[c]
+
+#     xrange = [x.min() * scf, x.max() * scf]
+#     yrange = [y.min() * scf, y.max() * scf]
+#     delta = max(xrange[1] - xrange[0], yrange[1] - yrange[0])
+#     xrange[1] = xrange[0] + delta
+#     yrange[1] = yrange[0] + delta
+
+#     ax_top = axs[0, c]
+#     ax_bottom = axs[1, c]
+    
+#     ax_top.plot(x*scf, y*scf, c='black', lw=1)
+#     # ax_top.plot(edata[1]*scf, edata[2]*scf, c='black', lw=1)
+#     ax_top.plot((opt8.X[:ls[c]] + shift_delta(opt8.X[:ls[c]]) * shift)*scf, opt8.Y[:ls[c]]*scf, c='C3', lw=1)
+#     ax_top.plot((opt8.X[ls[c]:] + shift_delta(opt8.X[ls[c]:]) * shift)*scf, opt8.Y[ls[c]:]*scf, c='C4', lw=1)
+#     # ax_top.plot((opt8.X[:] + shift_delta(opt8.X[:]) * shift)*scf, opt8.Y[:]*scf, c='C3')
+
+#     ax_top.set_xlabel('x (cm)')
+#     if c == 0:
+#         ax_top.set_ylabel('y (cm)', )
+#     ax_top.axis('equal')
+#     ax_top.text(0.85, 0.9, f'({letters[c]})', transform=ax_top.transAxes)
+
+#     ax_bottom.plot(edata[0], np.abs(edata[7]), c='black', lw=1)
+#     ax_bottom.plot(opt8.time[:ls[c]], opt8.sigma[:ls[c]], c='C3')
+#     ax_bottom.plot(opt8.time[ls[c]:], opt8.sigma[ls[c]:], c='C4')
+
+#     ax_bottom.set_xlabel('t (s)')
+#     if c == 0:
+#         ax_bottom.set_ylabel(r'$\eta$')
+#     ax_bottom.text(0.866, 0.9, f'({letters[c+4]})', transform=ax_bottom.transAxes)
+#     # ax_bottom.set_ylim([-0.1, 2])
+
+# fig.savefig(f'../code_outputs/figures/longdatafit.pdf', dpi=600)
+# plt.show()
+
+
+errors = np.array(errors)
+fig, axs = plt.subplots(4, 4, figsize=(10, 10))  # 2 rows, 5 columns
+fig.subplots_adjust(hspace=0.4, wspace=0.3)  # vertical spacing
+
+for c in range(4):
+
     edata = edatas[c]
     opt8 = opts[c]
     res = ress[c]
     vs = vparams[c]
 
-    xrange = [df.X.min() * 100, df.X.max() * 100]
-    yrange = [df.Y.min() * 100, df.Y.max() * 100]
+    xrange = [x.min() * scf, x.max() * scf]
+    yrange = [y.min() * scf, y.max() * scf]
     delta = max(xrange[1] - xrange[0], yrange[1] - yrange[0])
     xrange[1] = xrange[0] + delta
     yrange[1] = yrange[0] + delta
 
     ax_top = axs[0, c]
     ax_bottom = axs[1, c]
+    ax3 = axs[2, c]
+    ax4 = axs[3, c]
 
-    ax_top.plot(edata[1]*100, edata[2]*100, c='black', lw=1)
-    ax_top.plot((opt8.X + shift_delta(opt8.X) * shift)*100, opt8.Y*100, c='C3')
+    ax_top.plot(x*scf, y*scf, c='black', lw=1)
+    # ax_top.plot(edata[1]*scf, edata[2]*scf, c='black', lw=1)
+    ax_top.plot((opt8.X[:ls[c]] + shift_delta(opt8.X[:ls[c]]) * shift)*scf, opt8.Y[:ls[c]]*scf, c='C3', lw=1)
+    ax_top.plot((opt8.X[ls[c]:] + shift_delta(opt8.X[ls[c]:]) * shift)*scf, opt8.Y[ls[c]:]*scf, c='C4', lw=1)
+    # ax_top.plot((opt8.X[:] + shift_delta(opt8.X[:]) * shift)*scf, opt8.Y[:]*scf, c='C3')
+
     ax_top.set_xlabel('x (cm)')
     if c == 0:
         ax_top.set_ylabel('y (cm)', )
@@ -225,12 +296,27 @@ for c in range(len(ijk)):
     ax_top.text(0.85, 0.9, f'({letters[c]})', transform=ax_top.transAxes)
 
     ax_bottom.plot(edata[0], np.abs(edata[7]), c='black', lw=1)
-    ax_bottom.plot(opt8.time, opt8.sigma, c='C3')
+    ax_bottom.plot(opt8.time[:ls[c]], opt8.sigma[:ls[c]], c='C3')
+    ax_bottom.plot(opt8.time[ls[c]:], opt8.sigma[ls[c]:], c='C4')
+
     ax_bottom.set_xlabel('t (s)')
     if c == 0:
         ax_bottom.set_ylabel(r'$\eta$')
     ax_bottom.text(0.866, 0.9, f'({letters[c+4]})', transform=ax_bottom.transAxes)
-    ax_bottom.set_ylim([-0.1, 2])
+    # ax_bottom.set_ylim([-0.1, 2])
+    
+    ax3.plot(time, x*scf, c='black', lw=1)
+    ax3.plot(opt8.time[:ls[c]], opt8.X[:ls[c]]*scf, c='C3', lw=1)
+    ax3.plot(opt8.time[ls[c]:], opt8.X[ls[c]:]*scf, c='C4', lw=1)
+    ax3.set_xlabel('t (s)')
+    ax3.set_ylabel('x (cm)')
+
+    ax4.plot(time, y*scf, c='black', lw=1)
+    ax4.plot(opt8.time[:ls[c]], opt8.Y[:ls[c]]*scf, c='C3', lw=1)
+    ax4.plot(opt8.time[ls[c]:], opt8.Y[ls[c]:]*scf, c='C4', lw=1)
+    ax4.set_xlabel('t (s)')
+    ax4.set_ylabel('y (cm)')
 
 
-fig.savefig(f'../code_outputs/figures/constopt_4series2_shifted{shift}_.pdf', dpi=600)
+fig.savefig(f'../code_outputs/figures/longdatafit_xy.pdf', dpi=600)
+plt.show()

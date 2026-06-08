@@ -176,16 +176,6 @@ def erf10(sim_params, theta_interpolator,w_interpolator, direction=1, v_interpol
         fv2 = lambda t: 1/w(t)*(vo_2 - vh_2 * np.sin(vh_4 + theta_interpolator(t)))
     return fv1, fv2
 
-def erf11(sim_params, theta_interpolator, w_interpolator, direction=1, v_interpolate=False):
-    vo_1, vo_2, vh_1, vh_2, vh_3, vh_4 = sim_params
-    w = lambda t: np.abs(w_interpolator(t))
-    if v_interpolate:
-        fv1 = lambda t: (vo_1(t) + vh_1(t) * np.cos(theta_interpolator(t)) - vh_2(t) * np.sin(theta_interpolator(t)))
-        fv2 = lambda t: (vo_2(t) - vh_3(t) * np.cos(theta_interpolator(t)) - vh_4(t) * np.sin(theta_interpolator(t)))
-    else:
-        fv1 = lambda t: (vo_1 + vh_1 * np.cos(theta_interpolator(t)) - vh_2 * np.sin(theta_interpolator(t)))
-        fv2 = lambda t: (vo_2 - vh_3 * np.cos(theta_interpolator(t)) - vh_4 * np.sin(theta_interpolator(t)))
-    return fv1, fv2
 
 def erf12(sim_params, theta_interpolator, w_interpolator, direction=1, v_interpolate=False):
     vo_1, vo_2, vh_1, vh_2, vh_3, vh_4 = sim_params
@@ -209,8 +199,42 @@ def erf13(sim_params, theta_interpolator, w_interpolator, direction=1, v_interpo
         fv2 = lambda t: (1/w(t))**b*(vo_2)
     return fv1, fv2
 
+def erf14(sim_params, theta_interpolator, w_interpolator, direction=1, v_interpolate=False):
+    vo_1, vo_2, vh_1, vh_2, vh_3, vh_4, nu = sim_params
+    # w = lambda t: np.abs(w_interpolator(t))
+    fv1 = lambda t: (vo_1 + vh_1 * np.cos(nu*t) * np.cos(theta_interpolator(t)) - vh_2 * np.sin(nu*t) * np.sin(theta_interpolator(t)))
+    fv2 = lambda t: (vo_2 - vh_3 * np.sin(nu*t) * np.cos(theta_interpolator(t)) - vh_4 * np.cos(nu*t) * np.sin(theta_interpolator(t)))
+    return fv1, fv2
 
-erfs = [erf0, erf1, erf2, erf3, erf4, erf5, erf6, erf7,erf8, erf9, erf10,erf11,erf12,erf13]
-erf_param_len = [3,       4,    3,    2,    3,    2,    4,    5,   5,    6,     6,    6,    6, 3]
+
+def erf11(sim_params, theta_interpolator, w_interpolator, direction=1, v_interpolate=False):
+    vo_1, vo_2, vh_1, vh_2, vh_3, vh_4 = sim_params
+    w = lambda t: np.abs(w_interpolator(t))
+    if v_interpolate:
+        fv1 = lambda t: (vo_1(t) + vh_1(t) * np.cos(theta_interpolator(t)) - vh_2(t) * np.sin(theta_interpolator(t)))
+        fv2 = lambda t: (vo_2(t) - vh_3(t) * np.cos(theta_interpolator(t)) - vh_4(t) * np.sin(theta_interpolator(t)))
+    else:
+        fv1 = lambda t: (vo_1 + vh_1 * np.cos(theta_interpolator(t)) - vh_2 * np.sin(theta_interpolator(t)))
+        fv2 = lambda t: (vo_2 - vh_3 * np.cos(theta_interpolator(t)) - vh_4 * np.sin(theta_interpolator(t)))
+    return fv1, fv2
+
+
+
+def erf15(sim_params, theta_interpolator, w_interpolator, direction=1, v_interpolate=False):
+    vo_1, vo_2, vh_1, vh_2, vh_3, vh_4,nu = sim_params
+    w = lambda t: np.abs(w_interpolator(t))
+    if v_interpolate:
+        fv1 = lambda t: (vo_1(t) + vh_1(t) * np.cos(theta_interpolator(t)) - vh_2(t) * np.sin(theta_interpolator(t)))
+        fv2 = lambda t: (vo_2(t) - vh_3(t) * np.cos(theta_interpolator(t)) - vh_4(t) * np.sin(theta_interpolator(t)))
+    else:
+        fsin = lambda t: np.sin(theta_interpolator(t))*np.cos(nu*t) + np.cos(theta_interpolator(t))*np.sin(nu*t)
+        fcos = lambda t: np.cos(theta_interpolator(t))*np.cos(nu*t) - np.sin(theta_interpolator(t))*np.sin(nu*t)
+        fv1 = lambda t: (vo_1 + vh_1 * fcos(t) - vh_2 * fsin(t))
+        fv2 = lambda t: (vo_2 - vh_3 * fcos(t) - vh_4 * fsin(t))
+    return fv1, fv2
+
+
+erfs = [erf0, erf1, erf2, erf3, erf4, erf5, erf6, erf7,erf8, erf9, erf10,erf11,erf12,erf13,erf14, erf15]
+erf_param_len = [3,       4,    3,    2,    3,    2,    4,    5,   5,    6,     6,    6,    6, 3, 7, 7]
 
 
